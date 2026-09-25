@@ -34,13 +34,7 @@ export function PasswordSetup() {
       const fragment = new URLSearchParams(window.location.hash.slice(1));
       const accessToken = fragment.get("access_token");
       const refreshToken = fragment.get("refresh_token");
-      const linkType = fragment.get("type");
-
-      if (
-        accessToken
-        && refreshToken
-        && ["invite", "recovery", "magiclink"].includes(linkType ?? "")
-      ) {
+      if (accessToken && refreshToken) {
         const { error: sessionError } = await client.auth.setSession({
           access_token: accessToken,
           refresh_token: refreshToken,
