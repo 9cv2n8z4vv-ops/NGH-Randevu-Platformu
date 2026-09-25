@@ -30,13 +30,39 @@ export function PasswordSetup() {
       setSessionState(session ? "ready" : "missing");
     });
 
-    void client.auth.getSession().then((result: {
-      data: { session: Session | null };
-      error: { message: string } | null;
-    }) => {
+    void (async () => {
+      const fragment = new URLSearchParams(window.location.hash.slice(1));
+      const accessToken = fragment.get("access_token");
+      const refreshToken = fragment.get("refresh_token");
+      const linkType = fragment.get("type");
+
+      if (
+        accessToken
+        && refreshToken
+        && ["invite", "recovery", "magiclink"].includes(linkType ?? "")
+      ) {
+        const { error: sessionError } = await client.auth.setSession({
+          access_token: accessToken,
+          refresh_token: refreshToken,
+        });
+
+        if (!active) return;
+        if (sessionError) {
+          setSessionState("missing");
+          return;
+        }
+
+        window.history.replaceState(
+          window.history.state,
+          "",
+          window.location.pathname + window.location.search,
+        );
+      }
+
+      const { data, error: sessionError } = await client.auth.getSession();
       if (!active) return;
-      setSessionState(!result.error && result.data.session ? "ready" : "missing");
-    });
+      setSessionState(!sessionError && data.session ? "ready" : "missing");
+    })();
 
     return () => {
       active = false;
@@ -65,7 +91,7 @@ export function PasswordSetup() {
       router.replace("/yonetim");
       router.refresh();
     } catch {
-      setError("Parolanız kaydedilemedi. Davet bağlantısını yeniden açıp tekrar deneyin.");
+      setError("Parolanız kaydedilemedi. Davet veya parola yenileme bağlantısını yeniden açın.");
     } finally {
       setBusy(false);
     }
@@ -83,14 +109,14 @@ export function PasswordSetup() {
 
         {sessionState === "missing" && (
           <>
-            <p role="alert">Geçerli bir davet oturumu bulunamadı. Yönetici davet e-postasındaki bağlantıyı açın.</p>
+            <p role="alert">Geçerli bir davet oturumu bulunamadı. Yönetici davet veya parola yenileme bağlantısını açın.</p>
             <Link className="button button-dark" href="/yonetim/giris">Yönetici girişine dön</Link>
           </>
         )}
 
         {sessionState === "ready" && !complete && (
           <>
-            <p>Davetinizi tamamlamak için bu hesapta kullanacağınız yeni parolayı oluşturun.</p>
+            <p>Bu hesapta kullanacağınız yeni parolayı oluşturun.</p>
             <form onSubmit={savePassword}>
               <label>Yeni parola
                 <input
