@@ -22,7 +22,7 @@ export default async function AdminPage() {
     supabase.from("services").select("*").is("archived_at", null).order("display_order"),
     supabase.from("service_categories").select("*").is("archived_at", null).order("display_order"),
     supabase.from("staff").select("*").is("archived_at", null).order("display_order"),
-    supabase.from("payment_methods").select("*").eq("is_active", true).order("display_order"),
+    supabase.from("payment_methods").select("*").order("display_order"),
     supabase.from("expenses").select("id,name,amount,expense_type,occurred_on,description,recurring_rule_id,expense_categories(name)").gte("occurred_on", from.slice(0,10)).order("occurred_on", { ascending: false }).limit(100),
     fetchIncomeTransactions(supabase, incomeFrom, now.toISOString()),
     supabase.from("business_hours").select("*").order("day_of_week"),
@@ -58,7 +58,8 @@ type IncomeReportRow = {
   is_voided: boolean;
   staff_id: string | null;
   staff: { full_name: string } | { full_name: string }[] | null;
-  payment_methods: { name: string } | { name: string }[] | null;
+  payment_method_id: string | null;
+  payment_methods: { id: string; name: string } | { id: string; name: string }[] | null;
   income_transaction_services: Array<{ service_name_snapshot: string; quantity: number; amount: number }>;
 };
 
@@ -68,7 +69,7 @@ async function fetchIncomeTransactions(supabase: NonNullable<Awaited<ReturnType<
   for (let offset = 0; ; offset += pageSize) {
     const result = await supabase
       .from("income_transactions")
-      .select("id,source,occurred_at,expected_amount,collected_amount,description,is_voided,staff_id,staff(full_name),payment_methods(name),income_transaction_services(service_name_snapshot,quantity,amount)")
+      .select("id,source,occurred_at,expected_amount,collected_amount,description,is_voided,staff_id,payment_method_id,staff(full_name),payment_methods(id,name),income_transaction_services(service_name_snapshot,quantity,amount)")
       .gte("occurred_at", from)
       .lte("occurred_at", to)
       .order("occurred_at", { ascending: false })
