@@ -10,7 +10,7 @@ cp .env.example .env.local
 npm run dev
 ```
 
-Fill `.env.local` with the fresh Supabase project's URL and publishable key. Keep `SUPABASE_SERVICE_ROLE_KEY` server-side; never prefix it with `NEXT_PUBLIC_` or commit a secret.
+Fill `.env.local` with the fresh Supabase project's URL and publishable key. The protected cron route uses `SUPABASE_SECRET_KEY` on the server; never prefix it with `NEXT_PUBLIC_` or commit it. The legacy `SUPABASE_SERVICE_ROLE_KEY` is accepted as a temporary fallback.
 
 ## Fresh Supabase project
 
@@ -40,7 +40,7 @@ RLS restricts customer, appointment, financial, and audit data to users in `admi
 
 The Vercel project `ngh-salon-platform` is live at <https://ngh-salon-platform.vercel.app>. The current production build was uploaded directly from this source. Connect the GitHub repository to this existing Vercel project when the repository is visible to the connected GitHub integration, so future pushes can trigger deployments.
 
-Set the environment variables for Preview and Production in Vercel. The daily recurring-expense cron is scheduled for 06:00 UTC; it requires both `CRON_SECRET` and the server-only `SUPABASE_SERVICE_ROLE_KEY`. Without those values, the endpoint safely rejects the scheduled request and recurring expenses are not generated automatically.
+Set the environment variables for Preview and Production in Vercel. The daily recurring-expense cron is scheduled for 06:00 UTC; it requires both `CRON_SECRET` and the server-only `SUPABASE_SECRET_KEY` (or the legacy `SUPABASE_SERVICE_ROLE_KEY`). Without those values, the endpoint safely rejects the scheduled request and recurring expenses are not generated automatically.
 
 ## Verification
 
