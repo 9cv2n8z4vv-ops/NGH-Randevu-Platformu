@@ -15,7 +15,9 @@ export function createPublicClient(): SupabaseClient | null {
 
 export function createCronSupabase(): SupabaseClient | null {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  // Prefer Supabase's current server-only secret key. Keep the legacy JWT key
+  // as a fallback for existing deployments while they migrate.
+  const key = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !key) return null;
   return createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false } });
 }
