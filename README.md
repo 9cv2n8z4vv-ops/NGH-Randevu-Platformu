@@ -20,8 +20,9 @@ The current target is Supabase organization `Tuna Yelmen's Appointment operation
 
 ### First administrator
 
-1. Create the owner account in Supabase Authentication.
-2. In the SQL editor, grant only that account access:
+1. In Supabase Authentication → URL Configuration, set **Site URL** to `https://ngh-salon-platform.vercel.app/yonetim/kurulum` and add that exact URL under **Redirect URLs**.
+2. In Authentication → Users, choose **Add user → Send invitation** for the owner. The invitation link opens the production password setup page, where the owner creates a new password.
+3. In the SQL editor, grant only that account access:
 
    ```sql
    insert into public.admin_users (user_id, full_name, role)
@@ -32,13 +33,13 @@ The current target is Supabase organization `Tuna Yelmen's Appointment operation
      set full_name = excluded.full_name, role = excluded.role;
    ```
 
-3. Sign in at `/yonetim/giris`.
+4. Sign in at `/yonetim/giris` after setting the password.
 
 RLS restricts customer, appointment, financial, and audit data to users in `admin_users`. Public booking is performed through narrowly granted functions; it does not expose customer tables.
 
 ## Vercel
 
-The Vercel project `ngh-salon-platform` is live at <https://ngh-salon-platform.vercel.app>. The current production build was uploaded directly from this source. Connect the GitHub repository to this existing Vercel project when the repository is visible to the connected GitHub integration, so future pushes can trigger deployments.
+The Vercel project `ngh-salon-platform` is live at <https://ngh-salon-platform.vercel.app> and is connected to this GitHub repository. Pushes to `main` trigger production deployments.
 
 Set the environment variables for Preview and Production in Vercel. The daily recurring-expense cron is scheduled for 06:00 UTC; it requires both `CRON_SECRET` and the server-only `SUPABASE_SECRET_KEY` (or the legacy `SUPABASE_SERVICE_ROLE_KEY`). Without those values, the endpoint safely rejects the scheduled request and recurring expenses are not generated automatically.
 
