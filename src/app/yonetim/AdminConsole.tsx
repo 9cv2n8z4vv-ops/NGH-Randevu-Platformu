@@ -40,7 +40,7 @@ const slugify = (value: string) => value.toLocaleLowerCase("tr-TR").normalize("N
 const currencyFor = (settings: SiteSettings) => settings.currency || "TRY";
 function relation<T>(value: T | T[] | null | undefined): T | null { return Array.isArray(value) ? value[0] ?? null : value ?? null; }
 
-export function AdminConsole({ userEmail, adminName, initial }: { userEmail: string; adminName: string; initial: AdminData }) {
+export function AdminConsole({ userEmail, adminName, reportAsOf, initial }: { userEmail: string; adminName: string; reportAsOf: string; initial: AdminData }) {
   const router = useRouter();
   const [section, setSection] = useState("overview");
   const [message, setMessage] = useState("");
@@ -175,7 +175,7 @@ export function AdminConsole({ userEmail, adminName, initial }: { userEmail: str
       {section === "overview" && <Overview data={initial} todayKey={todayKey} todayAppointments={todayAppointments} monthlyIncome={monthlyIncome} monthlyExpenses={monthlyExpenses} />}
       {section === "appointments" && <Appointments data={initial} rows={visibleAppointments} search={search} onSearch={setSearch} perform={perform} />}
       {section === "services" && <Services data={initial} form={serviceForm} setForm={setServiceForm} categoryForm={categoryForm} setCategoryForm={setCategoryForm} onSubmit={addService} onCategory={addCategory} perform={perform} busy={busy} />}
-      {section === "staff" && <Staff data={initial} form={staffForm} setForm={setStaffForm} onSubmit={addStaff} perform={perform} busy={busy} />}
+      {section === "staff" && <><StaffPerformance data={initial} reportAsOf={reportAsOf} /><Staff data={initial} form={staffForm} setForm={setStaffForm} onSubmit={addStaff} perform={perform} busy={busy} /></>}
       {section === "customers" && <Customers data={initial} perform={perform} />}
       {section === "availability" && <Availability data={initial} onHours={saveHours} closureForm={closureForm} setClosureForm={setClosureForm} onClosure={addClosure} scheduleForm={scheduleForm} setScheduleForm={setScheduleForm} onStaffSchedule={saveStaffSchedule} timeOffForm={timeOffForm} setTimeOffForm={setTimeOffForm} onTimeOff={addStaffTimeOff} perform={perform} />}
       {section === "finance" && <Finance data={initial} expenseForm={expenseForm} setExpenseForm={setExpenseForm} recurringForm={recurringForm} setRecurringForm={setRecurringForm} onExpense={addExpense} onRecurring={addRecurring} perform={perform} busy={busy} />}
@@ -286,6 +286,54 @@ function Staff({ data, form, setForm, onSubmit, perform, busy }: { data: AdminDa
       <button className="button button-dark" disabled={busy}><Plus size={15} /> Personel ekle</button>
     </form>
   </div>;
+}
+
+function StaffPerformance({ data, reportAsOf }: { data: AdminData; reportAsOf: string }) {
+  const [rangeDays, setRangeDays] = useState(30);
+  const report = useMemo(() => {
+    const byStaff = new Map<string, { id: string; name: string; revenue: number; serviceCount: number; appointmentCount: number; services: Map<string, number> }>();
+    data.staff.forEach((member) => byStaff.set(member.id, { id: member.id, name: member.full_name, revenue: 0, serviceCount: 0, appointmentCount: 0, services: new Map() }));
+    const asOf = Date.parse(reportAsOf);
+    const cutoff = asOf - rangeDays * 24 * 60 * 60 * 1000;
+    let unassignedRevenue = 0;
+    data.incomes.filter((row) => !row.is_voided && new Date(row.occurred_at).getTime() >= cutoff && new Date(row.occurred_at).getTime() <= asOf).forEach((row) => {
+      const revenue = Number(row.collected_amount || 0);
+      if (!row.staff_id) { unassignedRevenue += revenue; return; }
+      const staff = relation(row.staff);
+      const entry = byStaff.get(row.staff_id) || { id: row.staff_id, name: staff?.full_name || "Personel kaydı yok", revenue: 0, serviceCount: 0, appointmentCount: 0, services: new Map<string, number>() };
+      entry.name = staff?.full_name || entry.name;
+      entry.revenue += revenue;
+      if (row.source === "appointment") entry.appointmentCount += 1;
+      (row.income_transaction_services || []).forEach((service: any) => {
+        const quantity = Number(service.quantity || 1);
+        entry.serviceCount += quantity;
+        const name = service.service_name_snapshot || "Hizmet";
+        entry.services.set(name, (entry.services.get(name) || 0) + quantity);
+      });
+      byStaff.set(row.staff_id, entry);
+    });
+    const rows = [...byStaff.values()].sort((a, b) => b.revenue - a.revenue || a.name.localeCompare(b.name, "tr"));
+    const totalRevenue = rows.reduce((sum, row) => sum + row.revenue, 0);
+    const appointmentCount = rows.reduce((sum, row) => sum + row.appointmentCount, 0);
+    const appointmentRevenue = data.incomes.filter((row) => !row.is_voided && row.source === "appointment" && row.staff_id && new Date(row.occurred_at).getTime() >= cutoff && new Date(row.occurred_at).getTime() <= asOf).reduce((sum, row) => sum + Number(row.collected_amount || 0), 0);
+    return { rows, totalRevenue, appointmentCount, appointmentRevenue, serviceCount: rows.reduce((sum, row) => sum + row.serviceCount, 0), unassignedRevenue };
+  }, [data.incomes, data.staff, rangeDays, reportAsOf]);
+  const maxRevenue = Math.max(0, ...report.rows.map((row) => row.revenue));
+  const maxServices = Math.max(0, ...report.rows.map((row) => row.serviceCount));
+  const periodLabel = rangeDays === 365 ? "Son 12 ay" : `Son ${rangeDays} gün`;
+
+  return <>
+    <section className="admin-panel staff-performance-panel">
+      <div className="admin-panel-heading staff-report-heading"><div><span className="eyebrow"><span className="eyebrow-line" /> PERSONEL PERFORMANSI</span><h2>Personel raporu</h2></div><label className="staff-report-period">Dönem<select value={rangeDays} onChange={(event) => setRangeDays(Number(event.target.value))}><option value={7}>Son 7 gün</option><option value={30}>Son 30 gün</option><option value={90}>Son 90 gün</option><option value={365}>Son 12 ay</option></select></label></div>
+      <div className="admin-kpis staff-report-kpis"><Kpi label="Personele yazılan ciro" value={formatMoney(report.totalRevenue, currencyFor(data.settings))} icon={<CircleDollarSign />} note={periodLabel} /><Kpi label="Yapılan hizmet" value={String(report.serviceCount)} icon={<Scissors />} note="Tamamlanan kayıtlardan" /><Kpi label="Tamamlanan randevu" value={String(report.appointmentCount)} icon={<CalendarDays />} note={periodLabel} /><Kpi label="Ort. randevu tahsilatı" value={formatMoney(report.appointmentCount ? report.appointmentRevenue / report.appointmentCount : 0, currencyFor(data.settings))} icon={<Users />} note="Personel ataması olanlar" /></div>
+      <div className="staff-report-charts">
+        <section className="staff-chart-card"><h3>Personel başına tahsilat</h3><p>Seçilen dönemde personele bağlanan fiilî tahsilat</p>{report.rows.length ? <div className="staff-chart-list" role="list">{report.rows.map((row) => <div className="staff-chart-row" role="listitem" key={row.id} aria-label={`${row.name}: ${formatMoney(row.revenue, currencyFor(data.settings))}`}><strong title={row.name}>{row.name}</strong><span className="staff-chart-track"><span className="staff-chart-fill" style={{ width: `${maxRevenue ? row.revenue / maxRevenue * 100 : 0}%` }} /></span><b>{formatMoney(row.revenue, currencyFor(data.settings))}</b></div>)}</div> : <p className="admin-empty">Bu dönemde tahsilat bulunmuyor.</p>}</section>
+        <section className="staff-chart-card"><h3>Yapılan hizmet sayısı</h3><p>Randevularda kaydedilmiş hizmet adetleri</p>{report.rows.length ? <div className="staff-chart-list" role="list">{report.rows.map((row) => <div className="staff-chart-row" role="listitem" key={row.id} aria-label={`${row.name}: ${row.serviceCount} hizmet`}><strong title={row.name}>{row.name}</strong><span className="staff-chart-track"><span className="staff-chart-fill staff-chart-fill-secondary" style={{ width: `${maxServices ? row.serviceCount / maxServices * 100 : 0}%` }} /></span><b>{row.serviceCount}</b></div>)}</div> : <p className="admin-empty">Bu dönemde tamamlanmış hizmet yok.</p>}</section>
+      </div>
+      <div className="admin-table-wrap staff-performance-table-wrap"><table className="admin-table staff-performance-table"><thead><tr><th>Personel</th><th>Tahsilat</th><th>Tamamlanan randevu</th><th>Yapılan hizmet</th><th>En sık yaptığı hizmetler</th></tr></thead><tbody>{report.rows.map((row) => { const topServices = [...row.services.entries()].sort((a, b) => b[1] - a[1]).slice(0, 2); return <tr key={row.id}><td><strong>{row.name}</strong></td><td>{formatMoney(row.revenue, currencyFor(data.settings))}</td><td>{row.appointmentCount}</td><td>{row.serviceCount}</td><td>{topServices.length ? topServices.map(([name, count]) => `${name} (${count})`).join(" · ") : "Henüz yok"}</td></tr>; })}</tbody></table></div>
+      <p className="staff-report-note">Ciro, seçilen dönemde personele bağlı kayıtlardaki fiilî tahsilattır; kâr hesabı değildir.{report.unassignedRevenue > 0 && <> Personel ataması yapılmamış genel tahsilat: <strong>{formatMoney(report.unassignedRevenue, currencyFor(data.settings))}</strong>.</>}</p>
+    </section>
+  </>;
 }
 
 function StaffEditor({ member, services, linkedServiceIds, perform }: { member: any; services: any[]; linkedServiceIds: string[]; perform: (action: () => Promise<any>, success: string) => Promise<void> }) {
