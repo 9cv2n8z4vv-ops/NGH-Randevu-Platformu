@@ -6,7 +6,7 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { CalendarDays, Check, ChevronRight, CircleDollarSign, Clock3, LayoutDashboard, LogOut, Plus, Scissors, Settings2, Users, Wallet } from "lucide-react";
+import { CalendarDays, Check, ChevronRight, CircleDollarSign, Clock3, KeyRound, LayoutDashboard, LogOut, Plus, Scissors, Settings2, Users, Wallet } from "lucide-react";
 import { createBrowserSupabase } from "@/lib/supabase-browser";
 import type { SiteSettings } from "@/lib/types";
 import { brandMonogram, formatDate, formatDuration, formatMoney, whatsappPhone } from "@/lib/format";
@@ -180,7 +180,7 @@ export function AdminConsole({ userEmail, adminName, reportAsOf, initial }: { us
       {section === "availability" && <Availability data={initial} onHours={saveHours} closureForm={closureForm} setClosureForm={setClosureForm} onClosure={addClosure} scheduleForm={scheduleForm} setScheduleForm={setScheduleForm} onStaffSchedule={saveStaffSchedule} timeOffForm={timeOffForm} setTimeOffForm={setTimeOffForm} onTimeOff={addStaffTimeOff} perform={perform} />}
       {section === "finance" && <Finance data={initial} expenseForm={expenseForm} setExpenseForm={setExpenseForm} recurringForm={recurringForm} setRecurringForm={setRecurringForm} onExpense={addExpense} onRecurring={addRecurring} perform={perform} busy={busy} />}
       {section === "content" && <SiteContent data={initial} perform={perform} />}
-      {section === "settings" && <Settings form={settingsForm} setForm={setSettingsForm} onSubmit={saveSettings} busy={busy} />}
+      {section === "settings" && <><Settings form={settingsForm} setForm={setSettingsForm} onSubmit={saveSettings} busy={busy} /><PasswordChange /></>}
     </section>
   </main>;
 }
@@ -544,5 +544,50 @@ function Settings({ form, setForm, onSubmit, busy }: { form: any; setForm: (valu
     <div className="admin-subsection-heading"><h3>Kişisel veriler aydınlatma metni</h3><p>İşletmenin gerçek veri sorumlusu, aktarım, saklama ve başvuru bilgilerini ekleyin.</p></div>
     <label className="privacy-policy-editor">Yayınlanacak metin<textarea rows={12} value={form.privacy_policy_text} onChange={(e) => field("privacy_policy_text", e.target.value)} placeholder="Veri sorumlusu, amaçlar, alıcılar, toplama yöntemi ve hukuki sebepler, saklama, haklar ve iletişim…" /></label>
     <div className="admin-form-footer"><p>İşletme adı, iletişim ve tema ayarları siteye yansıtılır. Aydınlatma metnini işletmenizin gerçek süreçleriyle eşleştirin.</p><button className="button button-dark" disabled={busy}><Check size={15} /> Değişiklikleri kaydet</button></div>
+  </form>;
+}
+
+function PasswordChange() {
+  const [password, setPassword] = useState("");
+  const [confirmation, setConfirmation] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+
+  async function changePassword(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setMessage("");
+    setError("");
+    if (password.length < 12) {
+      setError("Yeni parola en az 12 karakter olmalı.");
+      return;
+    }
+    if (password !== confirmation) {
+      setError("Parola alanları eşleşmiyor.");
+      return;
+    }
+
+    setBusy(true);
+    try {
+      const { error: updateError } = await createBrowserSupabase().auth.updateUser({ password });
+      if (updateError) throw updateError;
+      setPassword("");
+      setConfirmation("");
+      setMessage("Parola güncellendi. Artık diğer cihazda yeni parolanızla giriş yapabilirsiniz.");
+    } catch {
+      setError("Parola güncellenemedi. Bu cihazdaki yönetici oturumunun hâlâ açık olduğunu kontrol edip yeniden deneyin.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return <form className="admin-panel admin-form" onSubmit={changePassword}>
+    <div className="admin-panel-heading"><div><span className="eyebrow"><span className="eyebrow-line" /> HESAP GÜVENLİĞİ</span><h2>Yönetici parolası</h2></div><KeyRound size={19} /></div>
+    <p className="admin-empty">Bu cihazda yönetici oturumunuz açıksa yeni bir parola belirleyip diğer cihazlarda kullanabilirsiniz. En az 12 karakter girin.</p>
+    <label>Yeni parola<input type="password" autoComplete="new-password" minLength={12} required value={password} onChange={(event) => setPassword(event.target.value)} /></label>
+    <label>Yeni parolayı tekrar girin<input type="password" autoComplete="new-password" minLength={12} required value={confirmation} onChange={(event) => setConfirmation(event.target.value)} /></label>
+    {error && <p className="form-error" role="alert">{error}</p>}
+    {message && <p className="form-success" role="status">{message}</p>}
+    <button className="button button-dark" disabled={busy}><KeyRound size={15} /> {busy ? "Güncelleniyor…" : "Yönetici parolasını güncelle"}</button>
   </form>;
 }
