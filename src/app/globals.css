@@ -587,3 +587,57 @@ button, a { -webkit-tap-highlight-color: transparent; }
   .staff-chart-card { padding: 13px; }
   .staff-chart-row { grid-template-columns: minmax(62px, 88px) minmax(24px,1fr) auto; gap: 6px; }
 }
+
+/* Customer accounts, itemized tabs, and partial collections. */
+.customer-accounts { display: grid; gap: 18px; }
+.customer-accounts > .admin-kpis { grid-template-columns: repeat(3,minmax(0,1fr)); margin: 0; }
+.customer-accounts .admin-panel { min-width: 0; }
+.customer-accounts .admin-panel-heading { gap: 16px; flex-wrap: wrap; }
+.customer-back { justify-self: start; display: inline-flex; gap: 8px; align-items: center; }
+.customer-filters { display: flex; gap: 20px; align-items: center; flex-wrap: wrap; margin: 20px 0; }
+.customer-filters .admin-search { flex: 1; min-width: 220px; margin: 0; }
+.customer-checkbox { display: inline-flex; gap: 8px; align-items: center; font-size: 12px; color: #526156; }
+.customer-checkbox input { accent-color: var(--brand); width: 16px; height: 16px; }
+.customer-due { color: #965233; font-weight: 700; }
+.customer-list-footer { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding-top: 18px; font-size: 12px; color: #6d776e; }
+.customer-contact-form { padding: 20px 0; border-bottom: 1px solid #e5e1d9; margin-bottom: 12px; }
+.customer-accounts .button { width: fit-content; }
+.customer-accounts .admin-hint { line-height: 1.7; }
+.customer-invoice-item { padding: 16px; border: 1px solid #e1dfd5; min-width: 0; }
+.customer-invoice-item legend { padding: 0 8px; font-size: 12px; color: #526156; }
+.customer-item-grid { display: grid; grid-template-columns: 1.3fr 1.3fr .5fr .7fr; gap: 12px; }
+.customer-item-grid > label { min-width: 0; }
+.customer-item-bottom, .customer-invoice-total { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-top: 14px; }
+.customer-item-bottom { font-size: 13px; }
+.customer-item-bottom .admin-text-button { display: inline-flex; gap: 6px; align-items: center; }
+.customer-invoice-total { border-top: 1px solid #ddd; padding-top: 18px; font-size: 14px; }
+.customer-invoice-total strong { font-size: 24px; color: var(--brand); }
+.customer-invoice-card > summary { gap: 20px; align-items: center; }
+.customer-invoice-card > summary > span:first-child { min-width: 0; overflow-wrap: anywhere; }
+.customer-invoice-card > summary > span:last-child { flex-shrink: 0; font-size: 13px; }
+.customer-invoice-body { padding: 8px 0 20px; }
+.customer-invoice-body h3 { font-size: 14px; margin: 20px 0 8px; }
+.customer-balance-strip { display: grid; grid-template-columns: repeat(3,1fr); gap: 14px; padding: 18px; background: #f4f2eb; margin: 18px 0; font-size: 12px; color: #637168; }
+.customer-balance-strip b { display: block; font-size: 20px; color: var(--brand); margin-top: 7px; }
+.customer-payment-form { border: 1px solid #e0e7dd; background: #f8faf5; padding: 18px; margin: 18px 0; }
+.customer-payment-form h3 { margin: 0; }
+.customer-payment-grid { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 12px; }
+.customer-history-row { display: flex; justify-content: space-between; align-items: center; gap: 18px; padding: 16px 0; border-bottom: 1px solid #e8e5dc; font-size: 13px; }
+.customer-history-row > div { min-width: 0; }
+.customer-history-row strong { display: block; overflow-wrap: anywhere; }
+.customer-history-row small { display: block; color: #7d877d; font-size: 11px; line-height: 1.8; margin-top: 5px; overflow-wrap: anywhere; }
+.customer-history-row > b { white-space: nowrap; }
+.customer-invoice-footer { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding-top: 20px; }
+.customer-accounts button:disabled { opacity: .5; cursor: not-allowed; }
+@media (max-width: 800px) {
+  .customer-item-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .customer-payment-grid { grid-template-columns: 1fr; }
+  .customer-invoice-footer, .customer-history-row { align-items: flex-start; flex-wrap: wrap; }
+}
+@media (max-width: 480px) {
+  .customer-accounts > .admin-kpis { grid-template-columns: 1fr; }
+  .customer-invoice-card > summary { flex-wrap: wrap; gap: 10px; }
+  .customer-balance-strip { padding: 12px; gap: 8px; }
+  .customer-balance-strip b { font-size: 16px; }
+  .customer-filters .admin-search { min-width: 0; flex-basis: 100%; }
+}
