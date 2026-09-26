@@ -1,5 +1,5 @@
 export function formatMoney(value: number | string, currency = "TRY") {
-  return new Intl.NumberFormat("tr-TR", { style: "currency", currency, maximumFractionDigits: 0 }).format(Number(value || 0));
+  return new Intl.NumberFormat("tr-TR", { style: "currency", currency, minimumFractionDigits: 0, maximumFractionDigits: 2 }).format(Number(value || 0));
 }
 
 export function formatDuration(minutes: number) {
