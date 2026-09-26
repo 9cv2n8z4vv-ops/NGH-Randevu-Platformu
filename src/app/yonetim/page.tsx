@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import { createServerSupabase } from "@/lib/supabase-server";
+import type { CustomerAccount } from "@/lib/customer-accounts";
 import { AdminConsole } from "./AdminConsole";
 
 export const dynamic = "force-dynamic";
@@ -18,7 +19,7 @@ export default async function AdminPage() {
   const to = new Date(now.getTime() + 90 * 24 * 60 * 60 * 1000).toISOString();
   const [settings, appointments, services, categories, staff, paymentMethods, expenses, incomes, hours, closures, recurring, expenseCategories, customers, staffSchedule, staffTimeOff, staffServices, testimonials, gallery, faqs, auditLogs] = await Promise.all([
     supabase.from("site_settings").select("*").eq("id", 1).single(),
-    supabase.from("appointments").select("id, code, starts_at, ends_at, status, quoted_total, collected_total, payment_method_id, customers(first_name,last_name,phone), staff(full_name), appointment_services(service_name_snapshot,price_snapshot)").gte("starts_at", now.toISOString()).lt("starts_at", to).order("starts_at").limit(120),
+    supabase.from("appointments").select("id, code, starts_at, ends_at, status, quoted_total, collected_total, payment_method_id, customer_invoices(id), customers(first_name,last_name,phone), staff(full_name), appointment_services(service_name_snapshot,price_snapshot)").gte("starts_at", now.toISOString()).lt("starts_at", to).order("starts_at").limit(120),
     supabase.from("services").select("*").is("archived_at", null).order("display_order"),
     supabase.from("service_categories").select("*").is("archived_at", null).order("display_order"),
     supabase.from("staff").select("*").is("archived_at", null).order("display_order"),
@@ -29,7 +30,7 @@ export default async function AdminPage() {
     supabase.from("business_closures").select("*").gte("date_end", now.toISOString().slice(0,10)).order("date_start").limit(30),
     supabase.from("recurring_expense_rules").select("*, expense_categories(name)").order("next_run_on"),
     supabase.from("expense_categories").select("*").eq("is_active", true).order("name"),
-    supabase.from("customers").select("id,first_name,last_name,phone,email,private_note,created_at").order("created_at", { ascending: false }).limit(200),
+    fetchCustomerAccounts(supabase),
     supabase.from("staff_schedule").select("*"),
     supabase.from("staff_time_off").select("*").gte("end_at", now.toISOString()).order("start_at").limit(80),
     supabase.from("staff_services").select("*"),
@@ -51,6 +52,7 @@ export default async function AdminPage() {
 type IncomeReportRow = {
   id: string;
   source: string;
+  customer_id: string | null;
   occurred_at: string;
   expected_amount: number;
   collected_amount: number;
@@ -69,7 +71,7 @@ async function fetchIncomeTransactions(supabase: NonNullable<Awaited<ReturnType<
   for (let offset = 0; ; offset += pageSize) {
     const result = await supabase
       .from("income_transactions")
-      .select("id,source,occurred_at,expected_amount,collected_amount,description,is_voided,staff_id,payment_method_id,staff(full_name),payment_methods(id,name),income_transaction_services(service_name_snapshot,quantity,amount)")
+      .select("id,source,customer_id,appointment_id,customer_invoice_payments(invoice_id,customer_invoices(appointment_id)),occurred_at,expected_amount,collected_amount,description,is_voided,staff_id,payment_method_id,staff(full_name),payment_methods(id,name),income_transaction_services(service_name_snapshot,quantity,amount)")
       .gte("occurred_at", from)
       .lte("occurred_at", to)
       .order("occurred_at", { ascending: false })
@@ -77,5 +79,17 @@ async function fetchIncomeTransactions(supabase: NonNullable<Awaited<ReturnType<
     if (result.error) return result;
     rows.push(...((result.data ?? []) as IncomeReportRow[]));
     if ((result.data ?? []).length < pageSize) return { data: rows, error: null };
+  }
+}
+
+async function fetchCustomerAccounts(supabase: NonNullable<Awaited<ReturnType<typeof createServerSupabase>>>) {
+  const rows: CustomerAccount[] = [];
+  for (let offset = 0; ; offset += 500) {
+    const result = await supabase.rpc("customer_account_directory")
+      .order("created_at", { ascending: false }).order("id").range(offset, offset + 499);
+    if (result.error) return { data: null, error: result.error };
+    const page = (result.data ?? []) as CustomerAccount[];
+    rows.push(...page);
+    if (page.length < 500) return { data: rows, error: null };
   }
 }

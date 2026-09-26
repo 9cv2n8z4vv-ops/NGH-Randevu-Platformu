@@ -60,3 +60,31 @@ The GitHub Actions workflow runs these checks on pushes to `main` and on pull re
 - Use the Supabase project's supported backup/restore plan and test a restore before production use. Retain a separate protected database export according to the operator's retention policy.
 - Monitor Vercel function errors and Supabase database/security advisors after migrations.
 - Configure Vercel domain, production environment variables, and cron secret before promoting a deployment to production.
+
+## Müşteri kitlesi ve adisyonlar
+
+Yönetim panelindeki **Müşteri kitlesi** bölümü tüm müşteri kayıtlarını, müşteri başına
+ömür boyu tahsilatı ve kalan borcu gösterir. Liste sayfalanır; toplam kayıt sınırı
+25 değildir. Randevular ad, soyad, telefon ve hizmet geçmişini otomatik oluşturur.
+Türkiye telefon numaralarının `05…`, `5…` ve `+905…` biçimleri aynı kayıtta birleşir.
+
+- **Müşteri ekle:** iletişim bilgileri ve işletme içi not; mevcut bilgiler düzenlenebilir.
+- **Hizmet / adisyon ekle:** katalogdan veya elle hizmet, adet, fiyat, personel;
+  varsa ilk ödeme adisyonla aynı veritabanı işleminde kaydedilir.
+- **Ödeme al:** kısmi veya tam tahsilat; aynı anda gelir kaydı ve müşteri toplamı
+  güncellenir. Fazla ödeme reddedilir, ağ tekrarları ikinci gelir oluşturmaz.
+- **Tahsilatı iptal et / geri al:** gelir ve borç birlikte güncellenir. Ödeme bulunan
+  bir adisyon iptal edilmeden önce tahsilatları iptal edilmelidir.
+- **Randevu geçmişi → Tamamla ve adisyon aç:** randevu tamamlanır, hizmetler
+  adisyona aktarılır. Önceki randevu tahsilatı varsa yeniden gelir yazılmadan taşınır.
+- **Gelir ve gider → Randevusuz gelir:** isteğe bağlı müşteri seçilebilir. Bir adisyonun
+  borcunu kapatmak için her zaman müşteri kartındaki **Ödeme al** kullanılmalıdır.
+
+Müşteri toplamları finans ekranının tarih aralığıyla sınırlı değildir. İptal edilmiş
+kayıtlar geçmişte korunur, toplamların dışında kalır. Kısmi tahsilatlar personel
+cirosuna eklenir; aynı adisyon hizmet sayısını her taksitte yeniden artırmaz.
+
+`tests/customer-accounts.sql`, yetkili bir SQL bağlantısında çalıştırılan ve bütün
+örnek kayıtlarını `ROLLBACK` ile geri alan entegrasyon testidir. Kısmi/tam ödeme,
+fazla ödeme, tekrar istek, iptal/geri alma, randevudan aktarım, telefon eşleştirme
+ve yönetici olmayan hesapların erişim kısıtlamalarını kontrol eder.
