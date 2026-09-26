@@ -7,6 +7,8 @@ import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { CalendarDays, Check, ChevronRight, CircleDollarSign, Clock3, KeyRound, LayoutDashboard, LogOut, Plus, Scissors, Settings2, Users, Wallet } from "lucide-react";
+import { CustomerAccounts } from "./CustomerAccounts";
+import { customerError, type CustomerAccount } from "@/lib/customer-accounts";
 import { createBrowserSupabase } from "@/lib/supabase-browser";
 import type { SiteSettings } from "@/lib/types";
 import { brandMonogram, formatDate, formatDuration, formatMoney, whatsappPhone } from "@/lib/format";
@@ -24,7 +26,7 @@ type AdminData = {
   closures: Array<Record<string, any>>;
   recurring: Array<Record<string, any>>;
   expenseCategories: Array<Record<string, any>>;
-  customers: Array<Record<string, any>>;
+  customers: CustomerAccount[];
   staffSchedule: Array<Record<string, any>>;
   staffTimeOff: Array<Record<string, any>>;
   staffServices: Array<Record<string, any>>;
@@ -76,7 +78,7 @@ export function AdminConsole({ userEmail, adminName, reportAsOf, initial }: { us
       const result = await action();
       if (result?.error) throw new Error(result.error.message || "İşlem tamamlanamadı.");
       setMessage(success); router.refresh();
-    } catch (cause) { setFailure(cause instanceof Error ? cause.message : "İşlem tamamlanamadı."); }
+    } catch (cause) { setFailure(cause instanceof Error ? customerError(cause.message) : "İşlem tamamlanamadı."); }
     finally { setBusy(false); }
   }
 
@@ -157,7 +159,7 @@ export function AdminConsole({ userEmail, adminName, reportAsOf, initial }: { us
 
   const navItems = [
     ["overview", "Genel bakış", LayoutDashboard], ["appointments", "Randevular", CalendarDays],
-    ["services", "Hizmetler", Scissors], ["staff", "Personel", Users], ["customers", "Müşteriler", Users],
+    ["services", "Hizmetler", Scissors], ["staff", "Personel", Users], ["customers", "Müşteri kitlesi", Users],
     ["availability", "Çalışma saatleri", Clock3], ["finance", "Gelir ve gider", Wallet],
     ["content", "Site içerikleri", Settings2], ["settings", "İşletme ayarları", Settings2],
   ] as const;
@@ -176,7 +178,12 @@ export function AdminConsole({ userEmail, adminName, reportAsOf, initial }: { us
       {section === "appointments" && <Appointments data={initial} rows={visibleAppointments} search={search} onSearch={setSearch} perform={perform} />}
       {section === "services" && <Services data={initial} form={serviceForm} setForm={setServiceForm} categoryForm={categoryForm} setCategoryForm={setCategoryForm} onSubmit={addService} onCategory={addCategory} perform={perform} busy={busy} />}
       {section === "staff" && <><StaffPerformance data={initial} reportAsOf={reportAsOf} /><Staff data={initial} form={staffForm} setForm={setStaffForm} onSubmit={addStaff} perform={perform} busy={busy} /></>}
-      {section === "customers" && <Customers data={initial} perform={perform} />}
+      {section === "customers" && <CustomerAccounts customers={initial.customers} options={{
+        services: initial.services.map(s => ({ id:s.id,name:s.name,price:Number(s.price),is_active:s.is_active })),
+        staff: initial.staff.map(s => ({ id:s.id,name:s.full_name })),
+        methods: initial.paymentMethods.map(m => ({ id:m.id,name:m.name,is_active:m.is_active })),
+        currency: currencyFor(initial.settings), timezone: initial.settings.timezone || "Europe/Istanbul",
+      }} />}
       {section === "availability" && <Availability data={initial} onHours={saveHours} closureForm={closureForm} setClosureForm={setClosureForm} onClosure={addClosure} scheduleForm={scheduleForm} setScheduleForm={setScheduleForm} onStaffSchedule={saveStaffSchedule} timeOffForm={timeOffForm} setTimeOffForm={setTimeOffForm} onTimeOff={addStaffTimeOff} perform={perform} />}
       {section === "finance" && <Finance data={initial} expenseForm={expenseForm} setExpenseForm={setExpenseForm} recurringForm={recurringForm} setRecurringForm={setRecurringForm} onExpense={addExpense} onRecurring={addRecurring} perform={perform} busy={busy} />}
       {section === "content" && <SiteContent data={initial} perform={perform} />}
@@ -221,7 +228,9 @@ function AppointmentActions({ item, customer, data, perform }: { item: any; cust
     <select aria-label="Randevu durumu" defaultValue={item.status} onChange={(event) => {
       const status = event.target.value;
       if (!perform) return;
-      if (status === "completed") {
+      if (status === "completed" && relation(item.customer_invoices)?.id) {
+        void perform(() => db.from("appointments").update({ status, updated_at:new Date().toISOString() }).eq("id",item.id), "Randevu tamamlandı. Tahsilatlar müşteri kartındaki adisyondan yönetilir.");
+      } else if (status === "completed") {
         if (!paymentMethodId) { window.alert("Tamamlanan randevu için ödeme yöntemi seçin."); return; }
         const collected = window.prompt("Tahsil edilen tutar", String(item.quoted_total));
         if (collected === null || !Number.isFinite(Number(collected)) || Number(collected) < 0) return;
@@ -296,6 +305,8 @@ function StaffPerformance({ data, reportAsOf }: { data: AdminData; reportAsOf: s
     const asOf = Date.parse(reportAsOf);
     const cutoff = asOf - rangeDays * 24 * 60 * 60 * 1000;
     let unassignedRevenue = 0;
+    const countedDocuments = new Set<string>();
+    let appointmentRevenue = 0;
     data.incomes.filter((row) => !row.is_voided && new Date(row.occurred_at).getTime() >= cutoff && new Date(row.occurred_at).getTime() <= asOf).forEach((row) => {
       const revenue = Number(row.collected_amount || 0);
       if (!row.staff_id) { unassignedRevenue += revenue; return; }
@@ -303,19 +314,26 @@ function StaffPerformance({ data, reportAsOf }: { data: AdminData; reportAsOf: s
       const entry = byStaff.get(row.staff_id) || { id: row.staff_id, name: staff?.full_name || "Personel kaydı yok", revenue: 0, serviceCount: 0, appointmentCount: 0, services: new Map<string, number>() };
       entry.name = staff?.full_name || entry.name;
       entry.revenue += revenue;
-      if (row.source === "appointment") entry.appointmentCount += 1;
-      (row.income_transaction_services || []).forEach((service: any) => {
+      const invoicePayment = relation(row.customer_invoice_payments);
+      const linkedAppointment = relation(invoicePayment?.customer_invoices)?.appointment_id;
+      const documentId = invoicePayment?.invoice_id || row.appointment_id || row.id;
+      const isAppointment = row.source === "appointment" || Boolean(linkedAppointment);
+      if (isAppointment) appointmentRevenue += revenue;
+      if (!countedDocuments.has(documentId)) {
+        countedDocuments.add(documentId);
+        if (isAppointment) entry.appointmentCount += 1;
+        (row.income_transaction_services || []).forEach((service: any) => {
         const quantity = Number(service.quantity || 1);
         entry.serviceCount += quantity;
         const name = service.service_name_snapshot || "Hizmet";
         entry.services.set(name, (entry.services.get(name) || 0) + quantity);
-      });
+        });
+      }
       byStaff.set(row.staff_id, entry);
     });
     const rows = [...byStaff.values()].sort((a, b) => b.revenue - a.revenue || a.name.localeCompare(b.name, "tr"));
     const totalRevenue = rows.reduce((sum, row) => sum + row.revenue, 0);
     const appointmentCount = rows.reduce((sum, row) => sum + row.appointmentCount, 0);
-    const appointmentRevenue = data.incomes.filter((row) => !row.is_voided && row.source === "appointment" && row.staff_id && new Date(row.occurred_at).getTime() >= cutoff && new Date(row.occurred_at).getTime() <= asOf).reduce((sum, row) => sum + Number(row.collected_amount || 0), 0);
     return { rows, totalRevenue, appointmentCount, appointmentRevenue, serviceCount: rows.reduce((sum, row) => sum + row.serviceCount, 0), unassignedRevenue };
   }, [data.incomes, data.staff, rangeDays, reportAsOf]);
   const maxRevenue = Math.max(0, ...report.rows.map((row) => row.revenue));
@@ -349,21 +367,6 @@ function StaffEditor({ member, services, linkedServiceIds, perform }: { member: 
   </details>;
 }
 
-function Customers({ data, perform }: { data: AdminData; perform: (action: () => Promise<any>, success: string) => Promise<void> }) {
-  const db = createBrowserSupabase() as any;
-  const [search, setSearch] = useState("");
-  const matches = data.customers.filter((customer) => [customer.first_name, customer.last_name, customer.phone, customer.email].join(" ").toLocaleLowerCase("tr-TR").includes(search.toLocaleLowerCase("tr-TR")));
-  return <section className="admin-panel"><div className="admin-panel-heading"><div><span className="eyebrow"><span className="eyebrow-line" /> MÜŞTERİ KAYITLARI</span><h2>İletişim ve notlar</h2></div><span className="admin-count">{data.customers.length} kişi</span></div>
-    <label className="admin-search">Ara<input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Ad, telefon veya e-posta" /></label>
-    <div className="admin-table-wrap"><table className="admin-table"><thead><tr><th>Müşteri</th><th>Telefon</th><th>E-posta</th><th>İç not</th></tr></thead><tbody>{matches.map((customer) => <CustomerRow key={customer.id} customer={customer} save={(note) => perform(() => db.from("customers").update({ private_note: note, updated_at: new Date().toISOString() }).eq("id", customer.id), "Müşteri notu kaydedildi.")} />)}</tbody></table></div>
-    {!matches.length && <p className="admin-empty">Aramanızla eşleşen müşteri yok.</p>}
-  </section>;
-}
-
-function CustomerRow({ customer, save }: { customer: any; save: (note: string) => Promise<void> }) {
-  const [note, setNote] = useState(customer.private_note || "");
-  return <tr><td><strong>{customer.first_name} {customer.last_name}</strong><small>{formatDate(String(customer.created_at).slice(0,10))} katıldı</small></td><td>{customer.phone}</td><td>{customer.email || "—"}</td><td><form className="customer-note-form" onSubmit={(event) => { event.preventDefault(); void save(note); }}><input aria-label={`${customer.first_name} için iç not`} value={note} onChange={(event) => setNote(event.target.value)} placeholder="İşletme içi not" /><button className="admin-text-button">Kaydet</button></form></td></tr>;
-}
 
 function Availability({ data, onHours, closureForm, setClosureForm, onClosure, scheduleForm, setScheduleForm, onStaffSchedule, timeOffForm, setTimeOffForm, onTimeOff, perform }: { data: AdminData; onHours: (event: React.FormEvent<HTMLFormElement>) => void; closureForm: any; setClosureForm: (value: any) => void; onClosure: (event: React.FormEvent<HTMLFormElement>) => void; scheduleForm: any; setScheduleForm: (value: any) => void; onStaffSchedule: (event: React.FormEvent<HTMLFormElement>) => void; timeOffForm: any; setTimeOffForm: (value: any) => void; onTimeOff: (event: React.FormEvent<HTMLFormElement>) => void; perform: (action: () => Promise<any>, success: string) => Promise<void> }) {
   const db = createBrowserSupabase() as any;
@@ -408,7 +411,7 @@ function Availability({ data, onHours, closureForm, setClosureForm, onClosure, s
 function Finance({ data, expenseForm, setExpenseForm, recurringForm, setRecurringForm, onExpense, onRecurring, perform, busy }: { data: AdminData; expenseForm: any; setExpenseForm: (value: any) => void; recurringForm: any; setRecurringForm: (value: any) => void; onExpense: (event: React.FormEvent<HTMLFormElement>) => void; onRecurring: (event: React.FormEvent<HTMLFormElement>) => void; perform: (action: () => Promise<any>, success: string) => Promise<void>; busy: boolean }) {
   const db = createBrowserSupabase() as any;
   const dbCategories = data.expenseCategories || [];
-  const [manualIncome, setManualIncome] = useState({ description: "", amount: "", payment_method_id: data.paymentMethods.find((row) => row.is_active)?.id || "", staff_id: "", occurred_on: new Date().toISOString().slice(0,10) });
+  const [manualIncome, setManualIncome] = useState({ customer_id: "", description: "", amount: "", payment_method_id: data.paymentMethods.find((row) => row.is_active)?.id || "", staff_id: "", occurred_on: new Date().toISOString().slice(0,10) });
   const [visibleIncomeCount, setVisibleIncomeCount] = useState(20);
   const [paymentForm, setPaymentForm] = useState({ name: "", kind: "cash" });
   const [expenseCategoryForm, setExpenseCategoryForm] = useState({ name: "", expense_type: "shop" });
@@ -427,7 +430,7 @@ function Finance({ data, expenseForm, setExpenseForm, recurringForm, setRecurrin
   const byService = [...serviceTotals.entries()].sort((a, b) => b[1] - a[1]);
   async function addManualIncome(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    await perform(() => db.from("income_transactions").insert({ source: "manual_income", occurred_at: new Date(manualIncome.occurred_on + "T12:00:00.000Z").toISOString(), expected_amount: Number(manualIncome.amount), collected_amount: Number(manualIncome.amount), payment_method_id: manualIncome.payment_method_id || null, staff_id: manualIncome.staff_id || null, description: manualIncome.description }), "Gelir kaydedildi.");
+    await perform(() => db.from("income_transactions").insert({ source: "manual_income", occurred_at: new Date(manualIncome.occurred_on + "T12:00:00.000Z").toISOString(), expected_amount: Number(manualIncome.amount), collected_amount: Number(manualIncome.amount), payment_method_id: manualIncome.payment_method_id || null, staff_id: manualIncome.staff_id || null, customer_id: manualIncome.customer_id || null, description: manualIncome.description }), "Gelir kaydedildi.");
     setManualIncome({ ...manualIncome, description: "", amount: "" });
   }
   async function addPaymentMethod(event: React.FormEvent<HTMLFormElement>) {
@@ -442,7 +445,7 @@ function Finance({ data, expenseForm, setExpenseForm, recurringForm, setRecurrin
     <div className="admin-two-column admin-manage-grid"><section className="admin-panel"><div className="admin-panel-heading"><div><span className="eyebrow"><span className="eyebrow-line" /> TAHSİLAT DEFTERİ</span><h2>Gelir raporu</h2></div></div>{data.incomes.slice(0, visibleIncomeCount).map((row) => <IncomeLedgerRow key={row.id} row={row} data={data} perform={perform} busy={busy} />)}{data.incomes.length > visibleIncomeCount && <button type="button" className="admin-text-button" onClick={() => setVisibleIncomeCount((count) => count + 20)}>Daha eski {Math.min(20, data.incomes.length - visibleIncomeCount)} kaydı göster</button>}{!data.incomes.length && <p className="admin-empty">Tamamlanan randevular ve manuel gelirler burada görünür.</p>}</section>
       <div className="admin-column-stack"><form className="admin-panel admin-form" onSubmit={onExpense}><div className="admin-panel-heading"><div><span className="eyebrow"><span className="eyebrow-line" /> GİDER KAYDI</span><h2>Gider ekle</h2></div></div><label>Gider adı<input required value={expenseForm.name} onChange={(e) => setExpenseForm({ ...expenseForm, name: e.target.value })} /></label><div className="admin-form-inline"><label>Tutar<input required type="number" min="0" step="0.01" value={expenseForm.amount} onChange={(e) => setExpenseForm({ ...expenseForm, amount: e.target.value })} /></label><label>Tarih<input required type="date" value={expenseForm.occurred_on} onChange={(e) => setExpenseForm({ ...expenseForm, occurred_on: e.target.value })} /></label></div><div className="admin-form-inline"><label>Tür<select value={expenseForm.expense_type} onChange={(e) => setExpenseForm({ ...expenseForm, expense_type: e.target.value })}><option value="shop">İşletme</option><option value="service">Hizmet / malzeme</option></select></label><label>Kategori<select value={expenseForm.category_id} onChange={(e) => setExpenseForm({ ...expenseForm, category_id: e.target.value })}><option value="">Seçilmedi</option>{dbCategories.filter((row: any) => row.expense_type === expenseForm.expense_type).map((row: any) => <option key={row.id} value={row.id}>{row.name}</option>)}</select></label></div><label>Açıklama<input value={expenseForm.description} onChange={(e) => setExpenseForm({ ...expenseForm, description: e.target.value })} /></label><button className="button button-dark" disabled={busy}><Plus size={15} /> Gideri kaydet</button></form>
       <form className="admin-panel admin-form" onSubmit={onRecurring}><div className="admin-panel-heading"><div><span className="eyebrow"><span className="eyebrow-line" /> OTOMATİK TAKİP</span><h2>Düzenli gider</h2></div></div><label>Gider adı<input required value={recurringForm.name} onChange={(e) => setRecurringForm({ ...recurringForm, name: e.target.value })} placeholder="Kira" /></label><div className="admin-form-inline"><label>Tutar<input required type="number" min="0" step="0.01" value={recurringForm.amount} onChange={(e) => setRecurringForm({ ...recurringForm, amount: e.target.value })} /></label><label>Tekrar<select value={recurringForm.frequency} onChange={(e) => setRecurringForm({ ...recurringForm, frequency: e.target.value })}><option value="monthly">Aylık</option><option value="weekly">Haftalık</option><option value="yearly">Yıllık</option><option value="daily">Günlük</option></select></label></div><label>İlk kayıt tarihi<input required type="date" value={recurringForm.next_run_on} onChange={(e) => setRecurringForm({ ...recurringForm, next_run_on: e.target.value })} /></label><button className="button button-outline" disabled={busy}><Plus size={15} /> Tekrarı planla</button></form>
-      <form className="admin-panel admin-form" onSubmit={addManualIncome}><div className="admin-panel-heading"><div><span className="eyebrow"><span className="eyebrow-line" /> HIZLI TAHSİLAT</span><h2>Randevusuz gelir</h2></div></div><label>Açıklama<input required value={manualIncome.description} onChange={(e) => setManualIncome({ ...manualIncome, description: e.target.value })} placeholder="Ürün satışı" /></label><div className="admin-form-inline"><label>Tutar<input required type="number" min="0" step="0.01" value={manualIncome.amount} onChange={(e) => setManualIncome({ ...manualIncome, amount: e.target.value })} /></label><label>Tarih<input required type="date" value={manualIncome.occurred_on} onChange={(e) => setManualIncome({ ...manualIncome, occurred_on: e.target.value })} /></label></div><div className="admin-form-inline"><label>Ödeme yöntemi<select value={manualIncome.payment_method_id} onChange={(e) => setManualIncome({ ...manualIncome, payment_method_id: e.target.value })}><option value="">Belirtilmedi</option>{data.paymentMethods.filter((row) => row.is_active).map((row) => <option key={row.id} value={row.id}>{row.name}</option>)}</select></label><label>Personel<select value={manualIncome.staff_id} onChange={(e) => setManualIncome({ ...manualIncome, staff_id: e.target.value })}><option value="">Genel</option>{data.staff.map((row) => <option key={row.id} value={row.id}>{row.full_name}</option>)}</select></label></div><button className="button button-dark"><Plus size={15} /> Geliri kaydet</button></form></div></div>
+      <form className="admin-panel admin-form" onSubmit={addManualIncome}><div className="admin-panel-heading"><div><span className="eyebrow"><span className="eyebrow-line" /> HIZLI TAHSİLAT</span><h2>Randevusuz gelir</h2></div></div><label>Müşteri (isteğe bağlı)<select value={manualIncome.customer_id} onChange={e => setManualIncome({ ...manualIncome,customer_id:e.target.value })}><option value="">Genel gelir</option>{data.customers.map(c => <option key={c.id} value={c.id}>{c.first_name} {c.last_name} · {c.phone}</option>)}</select></label><p className="admin-hint">Adisyon borcu tahsil ediyorsanız müşteri kartındaki Ödeme al bölümünü kullanın.</p><label>Açıklama<input required value={manualIncome.description} onChange={(e) => setManualIncome({ ...manualIncome, description: e.target.value })} placeholder="Ürün satışı" /></label><div className="admin-form-inline"><label>Tutar<input required type="number" min="0" step="0.01" value={manualIncome.amount} onChange={(e) => setManualIncome({ ...manualIncome, amount: e.target.value })} /></label><label>Tarih<input required type="date" value={manualIncome.occurred_on} onChange={(e) => setManualIncome({ ...manualIncome, occurred_on: e.target.value })} /></label></div><div className="admin-form-inline"><label>Ödeme yöntemi<select value={manualIncome.payment_method_id} onChange={(e) => setManualIncome({ ...manualIncome, payment_method_id: e.target.value })}><option value="">Belirtilmedi</option>{data.paymentMethods.filter((row) => row.is_active).map((row) => <option key={row.id} value={row.id}>{row.name}</option>)}</select></label><label>Personel<select value={manualIncome.staff_id} onChange={(e) => setManualIncome({ ...manualIncome, staff_id: e.target.value })}><option value="">Genel</option>{data.staff.map((row) => <option key={row.id} value={row.id}>{row.full_name}</option>)}</select></label></div><button className="button button-dark"><Plus size={15} /> Geliri kaydet</button></form></div></div>
     <div className="admin-two-column admin-manage-grid"><section className="admin-panel"><div className="admin-panel-heading"><div><span className="eyebrow"><span className="eyebrow-line" /> ÖDEME YÖNTEMLERİ</span><h2>Yöntemleri yönetin</h2></div></div><p className="admin-hint">Gizlemek, yöntemi yeni tahsilat seçeneklerinden kaldırır ve geçmiş kayıtlarını korur.</p>{data.paymentMethods.map((row) => <PaymentMethodEditor key={row.id} row={row} perform={perform} busy={busy} />)}<form className="admin-inline-create" onSubmit={addPaymentMethod}><label>Yeni yöntem<input required value={paymentForm.name} onChange={(e) => setPaymentForm({ ...paymentForm, name: e.target.value })} /></label><select aria-label="Yeni ödeme yöntemi türü" value={paymentForm.kind} onChange={(e) => setPaymentForm({ ...paymentForm, kind: e.target.value })}><option value="cash">Nakit</option><option value="card">Kart</option><option value="iban">IBAN</option></select><button className="button button-outline"><Plus size={14} /> Ekle</button></form></section>
       <section className="admin-panel"><div className="admin-panel-heading"><div><span className="eyebrow"><span className="eyebrow-line" /> GİDER KATEGORİLERİ</span><h2>Türleri yönetin</h2></div></div>{dbCategories.map((row: any) => <div className="admin-list-row" key={row.id}><span><strong>{row.name}</strong><small>{row.expense_type === "shop" ? "İşletme" : "Hizmet / malzeme"}</small></span><button className="admin-icon-button" aria-label="Gider kategorisini gizle" onClick={() => void perform(() => db.from("expense_categories").update({ is_active: false }).eq("id", row.id), "Gider kategorisi kapatıldı.")}>×</button></div>)}<form className="admin-inline-create" onSubmit={addExpenseCategory}><label>Yeni kategori<input required value={expenseCategoryForm.name} onChange={(e) => setExpenseCategoryForm({ ...expenseCategoryForm, name: e.target.value })} /></label><select aria-label="Gider kategorisi türü" value={expenseCategoryForm.expense_type} onChange={(e) => setExpenseCategoryForm({ ...expenseCategoryForm, expense_type: e.target.value })}><option value="shop">İşletme</option><option value="service">Hizmet</option></select><button className="button button-outline"><Plus size={14} /> Ekle</button></form></section></div>
     <div className="admin-two-column admin-manage-grid"><section className="admin-panel"><div className="admin-panel-heading"><div><span className="eyebrow"><span className="eyebrow-line" /> TEKRARLAYAN KAYITLAR</span><h2>Düzenli gider planları</h2></div></div>{data.recurring.map((row) => <div className="admin-list-row" key={row.id}><span><strong>{row.name} · {formatMoney(row.amount, currencyFor(data.settings))}</strong><small>{row.frequency === "monthly" ? "Aylık" : row.frequency === "weekly" ? "Haftalık" : row.frequency === "yearly" ? "Yıllık" : "Günlük"} · sonraki {formatDate(row.next_run_on)}</small></span><button className="admin-text-button" onClick={() => void perform(() => db.from("recurring_expense_rules").update({ is_active: !row.is_active }).eq("id", row.id), row.is_active ? "Düzenli gider durduruldu." : "Düzenli gider açıldı.")}>{row.is_active ? "Aktif" : "Duraklatıldı"}</button></div>)}{!data.recurring.length && <p className="admin-empty">Planlanmış gider yok.</p>}</section>
@@ -455,6 +458,7 @@ function IncomeLedgerRow({ row, data, perform, busy }: { row: any; data: AdminDa
   const staff = relation(row.staff);
   const method = relation(row.payment_methods);
   const [form, setForm] = useState({
+    customer_id: row.customer_id || "",
     description: row.description || "",
     amount: String(row.collected_amount ?? ""),
     occurred_on: String(row.occurred_at).slice(0, 10),
@@ -464,7 +468,7 @@ function IncomeLedgerRow({ row, data, perform, busy }: { row: any; data: AdminDa
 
   if (row.source !== "manual_income") {
     return <div className="admin-list-row" key={row.id}>
-      <span><strong>{row.description || "Randevu geliri"}{row.is_voided && <small> · İptal edildi</small>}</strong><small>{formatDate(String(row.occurred_at).slice(0, 10))} · {staff?.full_name || "Genel"} · {method?.name || "Yöntem belirtilmedi"} · Randevuya bağlı</small></span>
+      <span><strong>{row.description || "Randevu geliri"}{row.is_voided && <small> · İptal edildi</small>}</strong><small>{formatDate(String(row.occurred_at).slice(0, 10))} · {staff?.full_name || "Genel"} · {method?.name || "Yöntem belirtilmedi"} · {row.source === "manual_service" ? "Adisyona bağlı · Müşteri kartından yönetilir" : "Randevuya bağlı"}</small></span>
       <b className={row.is_voided ? "muted-amount" : ""}>{formatMoney(row.collected_amount, currencyFor(data.settings))}</b>
     </div>;
   }
@@ -475,6 +479,7 @@ function IncomeLedgerRow({ row, data, perform, busy }: { row: any; data: AdminDa
       event.preventDefault();
       void perform(() => db.from("income_transactions").update({
         description: form.description.trim(),
+        customer_id: form.customer_id || null,
         expected_amount: Number(form.amount),
         collected_amount: Number(form.amount),
         occurred_at: new Date(form.occurred_on + "T12:00:00.000Z").toISOString(),
@@ -483,7 +488,7 @@ function IncomeLedgerRow({ row, data, perform, busy }: { row: any; data: AdminDa
         updated_at: new Date().toISOString(),
       }).eq("id", row.id).eq("source", "manual_income"), "Gelir kaydı güncellendi.");
     }}>
-      <label>Açıklama<input required value={form.description} onChange={(event) => setForm({ ...form, description: event.target.value })} /></label>
+      <label>Açıklama<input required value={form.description} onChange={(event) => setForm({ ...form, description: event.target.value })} /></label><label>Müşteri<select value={form.customer_id} onChange={e => setForm({ ...form,customer_id:e.target.value })}><option value="">Genel gelir</option>{data.customers.map(c => <option key={c.id} value={c.id}>{c.first_name} {c.last_name} · {c.phone}</option>)}</select></label>
       <div className="admin-form-inline"><label>Tutar<input required type="number" min="0" step="0.01" value={form.amount} onChange={(event) => setForm({ ...form, amount: event.target.value })} /></label><label>Tarih<input required type="date" value={form.occurred_on} onChange={(event) => setForm({ ...form, occurred_on: event.target.value })} /></label></div>
       <div className="admin-form-inline"><label>Ödeme yöntemi<select value={form.payment_method_id} onChange={(event) => setForm({ ...form, payment_method_id: event.target.value })}><option value="">Belirtilmedi</option>{data.paymentMethods.map((item) => <option key={item.id} value={item.id}>{item.name}{!item.is_active ? " (gizli)" : ""}</option>)}</select></label><label>Personel<select value={form.staff_id} onChange={(event) => setForm({ ...form, staff_id: event.target.value })}><option value="">Genel</option>{data.staff.map((item) => <option key={item.id} value={item.id}>{item.full_name}</option>)}</select></label></div>
       <div className="admin-record-actions"><button className="button button-dark" disabled={busy}><Check size={14} /> Değişiklikleri kaydet</button><button type="button" className="admin-text-button is-danger" disabled={busy} onClick={() => {
